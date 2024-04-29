@@ -106,7 +106,15 @@ def generate_sudoku_cnf(sudoku: Sudoku) -> Iterable[Formula]:
     ```
     """
 
-  
+def disj_parser(farr):
+    if isinstance(farr, str):
+        farr = farr.split('\\/')
+    if len(farr) == 1:
+        return farr[0]
+    else:
+        p1 = farr.pop()
+        return Or(p1, disj_parser(farr))        
+        
 def generate_sudoku_cnf(sudoku):
     n = len(sudoku)
     if n != 9: raise Exception('Invalid sudoku format')
