@@ -17,8 +17,8 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import InitVar, dataclass, field
 from functools import cached_property
-from itertools import pairwise
-from typing import TYPE_CHECKING, ClassVar, Final, Literal, TypeAlias, cast, overload
+from itertools import chain, pairwise
+from typing import TYPE_CHECKING, ClassVar, Final, Literal, Self, TypeAlias, cast, overload
 
 from util import memoize
 
@@ -447,6 +447,105 @@ class Impl(BinaryFormula):
 
     def evaluate(self, interpretation: dict[Symbol, bool]) -> bool:
         return self.first.evaluate(interpretation) <= self.second.evaluate(interpretation)
+
+
+@dataclass
+class BigFormula(Formula, ABC):
+    subformulae: list[Formula]
+
+    label: ClassVar[BinaryOperator]
+
+    def __str__(self) -> str:
+        match self.subformulae:
+            case []:
+                return "1"
+            case [formula]:
+                return str(formula)
+            case _:
+                inner = f" {self.label} ".join(str(f) for f in self.subformulae)
+                return f"({inner})"
+
+    def __iter__(self) -> Iterator[Formula]:
+        return iter(self.subformulae)
+
+    @cached_property
+    def operators(self) -> frozenset[Operator]:
+        return frozenset(chain([self.label], chain.from_iterable(f.operators for f in self.subformulae)))
+
+    @cached_property
+    def symbols(self) -> frozenset[Symbol]:
+        return frozenset(chain.from_iterable(f.symbols for f in self.subformulae))
+
+    @classmethod
+    def flatten(cls, formula: Formula) -> Self:
+        """Flattens the topmost part of the formula that is all joined by the same operator.
+
+        Will flatten through regular and big versions of the top level operator.
+        Preserves the order of subformulae with different nodes.
+
+        E.g. given
+        ```py
+        formula = And(
+            first=And(
+                first=Or(Symbol("X"), Symbol("Y)),
+                second=And(
+                    first=Symbol("Z"),
+                    second=Constant("1"),
+                ),
+            ),
+            second=And(
+                first=BigAnd(
+                    subformulae=[
+                        Impl(Constant("0"), Constant("1")),
+                        Or(Symbol("X"), Symbol("X")),
+                        Symbol("Y"),
+                    ],
+                ),
+                second=Symbol("Z"),
+            ),
+        )
+        ```
+        flatten will result in
+        ```py
+        BigAnd(
+            subformulae=[
+                Or(Symbol("X"), Symbol("Y)),
+                Symbol("Z"),
+                Constant("1"),
+                Impl(Constant("0"), Constant("1")),
+                Or(Symbol("X"), Symbol("X")),
+                Symbol("Y"),
+                Symbol("Z"),
+            ]
+        )
+        ```
+        """
+        subformulae = [formula]
+        collected = list[Formula]()
+        while subformulae:
+            top = subformulae.pop()
+            match top:
+                case BinaryFormula(f1, f2) if top.label == cls.label:
+                    subformulae.extend([f1, f2])
+                case BigFormula(subformulae) if top.label == cls.label:
+                    subformulae.extend(subformulae)
+                case other:
+                    collected.append(other)
+        return cls(collected)
+
+
+class BigOr(BigFormula):
+    label = "\\/"
+
+    def evaluate(self, interpretation: dict[Symbol, bool]) -> bool:
+        return any(subformula.evaluate(interpretation) for subformula in self.subformulae)
+
+
+class BigAnd(BigFormula):
+    label = "/\\"
+
+    def evaluate(self, interpretation: dict[Symbol, bool]) -> bool:
+        return all(subformula.evaluate(interpretation) for subformula in self.subformulae)
 
 
 Interpretation = dict[Symbol, bool]
