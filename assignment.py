@@ -135,7 +135,7 @@ def is_dnf(formula):
     return True
 
 def _or(big):
-    print(f'correcting {big}')
+   # print(f'correcting {big}')
     if type(big).__name__ != 'BigOr': return big
     for d, i in enumerate(big.subformulae):
         corr = BigOr([])
@@ -146,28 +146,28 @@ def _or(big):
                                 + big.subformulae[1+d:] 
                                 + [subel]]))
             corr = BigAnd(subformulae = cl)
-            print(f'correction: {is_cnf(corr)} == {corr}')
+#            print(f'correction: {is_cnf(corr)} == {corr}')
             return _or(corr)
         elif type(i).__name__ == 'BigOr':
-            print(f'append to bigor? {i}')
+          #  print(f'append to bigor? {i}')
             for sub in i:
                 if not is_clause(sub):
                     sub = _or(sub)
-                    print(f'correction** {sub}')
+                  #  print(f'correction** {sub}')
                     big.subformulae[d] = sub
                     return big
         else:
-            print(f'appending {i} to {corr}')
+          #  print(f'appending {i} to {corr}')
             corr.subformulae.append(i)
-        print(f'valid clause? {corr}, {is_clause(corr)}')
+      #  print(f'valid clause? {corr}, {is_clause(corr)}')
         return corr
 
 def transform(formula):
-    print(f'transforming {formula}')
+   # print(f'transforming {formula}')
     formula = to_nnf(formula)
-    print(f'nnf {formula}')
+ #   print(f'nnf {formula}')
     formula = big_maker(formula)
-    print(f'big {formula}')
+  #  print(f'big {formula}')
     if type(formula).__name__ == 'BigAnd': formula = big_maker(to_nnf(Neg(formula)))
     
     while not is_cnf(formula) and not is_dnf(formula):
@@ -240,16 +240,7 @@ def convert_to_dnf(formula: Formula) -> BigOr:
     You may assume that input formulas do not already contain BigAnd or BigOr.
     """
 
-    if is_clause(formula): return formula
-    if is_term(formula): return neg_checker(Neg(formula))
-
-    formula, cnf, dnf = transform(formula)
-    
-    if dnf: return formula
-    elif cnf: return neg_checker(Neg(formula))
-    else: 
-        print('something went wrong')
-        return formula
+    return neg_checker(Neg(convert_to_cnf(formula)))
     
     
 
@@ -269,10 +260,12 @@ def convert_to_cnf(formula: Formula) -> BigAnd:
     
    You may assume that input formulas do not already contain BigAnd or BigOr.
     """
-
-    if is_term(formula): return formula
-    if is_clause(formula): return neg_checker(Neg(formula))
-
+    
+    try:
+        if is_term(big_maker(neg_checker(formula))): return formula
+        if is_clause(big_maker(neg_checker(formula))): return neg_checker(Neg(formula))
+    except Exception as e:
+        print('Error checking clause/term')
     formula, cnf, dnf = transform(formula)
     
     if cnf: return formula
