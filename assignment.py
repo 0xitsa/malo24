@@ -1,275 +1,74 @@
-"""Week 2 assignment."""
+"""Week 3 assignment.
 
-from propositional import *
+Note that this week's `propositional.py` defines `BigAnd` and `BigOr` differently.
+In particular, the `subformulae` attribute now is a tuple instead of a list. This means that you can no longer change an
+existing `BigAnd` or `BigOr` objects, but you can now always safely use their `symbols` or `operators` properties.
 
-def neg_checker(formula):
-    if type(formula).__name__ != 'Neg': return formula
-    #print(f'neg checking: {formula}')
-    if type(formula.subformula).__name__ == 'BigAnd':
-        corr = BigOr([neg_checker(Neg(el)) for el in formula.subformula.subformulae])
-    elif type(formula.subformula).__name__ == 'BigOr':
-        corr = BigAnd([neg_checker(Neg(el)) for el in formula.subformula.subformulae])
-    elif type(formula.subformula).__name__ == 'And':
-        corr = BigOr([neg_checker(Neg(formula.subformula.first)), neg_checker(Neg(formula.subformula.second))])
-    elif type(formula.subformula).__name__ == 'Or':
-        corr = BigAnd([neg_checker(Neg(formula.subformula.first)), neg_checker(Neg(formula.subformula.second))])
-    elif type(formula.subformula).__name__ == 'Neg':
-        corr = neg_checker(formula.subformula.subformula)
-    elif type(formula).__name__ == 'bool':
-        return not formula
-    else: return formula
-    #print(f'neg correction: {corr}')    
-    return corr
+We also simplified constructing these objects, you no longer need to pass a list of formulae but can instead list them
+directly in the constructor arguments like `BigAnd(X, Y, Z)`. Invocations using a signle `Iterable` like a list
+`BigAnd([X, Y, Z])` still are supported. See the constructor documentation for more detail.
 
-def to_nnf_neg(formula):
-    formula = neg_checker(formula)
-    if type(formula).__name__ != 'Neg': return to_nnf(formula)
-    sub = formula.subformula
-    if type(sub).__name__ == 'Or':
-        corr = And(neg_checker(Neg(sub.first)), neg_checker(Neg(sub.second)))
-    elif type(sub).__name__ == 'And':
-        corr = Or(neg_checker(Neg(sub.first)), neg_checker(Neg(sub.second)))
-    elif type(sub).__name__ == 'Impl':
-        corr = to_nnf_neg(neg_checker(Neg(to_nnf_impl(sub))))
-    elif type(sub).__name__ == 'Neg':
-        corr = neg_checker(formula)
-    elif type(sub).__name__ in ['Symbol', 'Constant', 'bool']:
-        corr = neg_checker(formula)
-        return corr
-    elif type(sub).__name__ == 'BigOr':
-        corrs = [to_nnf(neg_checker(Neg(subi))) for subi in sub.subformulae]
-        corr = BigAnd(corrs)
-    elif type(sub).__name__ == 'BigAnd':
-        corrs = [to_nnf(neg_checker(Neg(subi))) for subi in sub.subformulae]
-        corr = BigOr(corrs)
-    return to_nnf(corr)
+Further, we have updated the `Formula` definition to now allow for better type checking. The functionality of all
+classes remain exactly the same. If you are not using a type checker, you can ignore the new type aliases and e.g.
+treat `CNF` exactly the same as `BigAnd` or `DNF` the same as `BigOr`.
+"""
 
-def to_nnf_impl(formula):
-    corr = Or(to_nnf_neg(Neg(formula.first)), to_nnf(formula.second))
-    return to_nnf(corr)
+from propositional import CNF, Interpretation
 
-def to_nnf(formula):
-    #print('correcting :', formula)
-    if type(formula).__name__ == 'Neg':
-        corr = to_nnf_neg(formula)
-    if type(formula).__name__ == 'Or':
-        corr = Or(to_nnf(formula.first), to_nnf(formula.second))
-    elif type(formula).__name__ == 'And':
-        corr = And(to_nnf(formula.first), to_nnf(formula.second))
-    elif type(formula).__name__ == 'Impl':
-        corr = to_nnf_impl(formula)
-    elif type(formula).__name__ == 'Symbol':
-        corr = formula
-    elif type(formula).__name__ == 'BigOr':
-        corrs = [to_nnf(sub) for sub in formula.subformulae]
-        corr = BigOr(corrs)
-    elif type(formula).__name__ == 'BigAnd':
-        corrs = [to_nnf(sub) for sub in formula.subformulae]
-        corr = BigAnd(corrs)
-    elif type(formula).__name__ == 'bool' or type(formula).__name__ == 'Constant':
-        corr = formula
-    #print(formula, type(formula))
-    #print('correctiON :', corr)
-    return corr
 
-def big_maker(formula):  
-    if type(formula).__name__ == 'Neg':
-        if type(formula.subformula).__name__ not in ['Symbol', 'Constant', 'bool']: return big_maker(neg_checker(formula))
-        return formula
-    elif type(formula).__name__ == 'Or':
-        return BigOr([big_maker(formula.first), big_maker(formula.second)])
-    elif type(formula).__name__ == 'And':
-        return BigAnd([big_maker(formula.first), big_maker(formula.second)])
-    elif type(formula).__name__ == 'Symbol':
-        return formula
-    elif type(formula).__name__ == 'BigOr':
-        return BigOr([big_maker(sub) for sub in formula.subformulae])
-    elif type(formula).__name__ == 'BigAnd':
-        return BigAnd([big_maker(sub) for sub in formula.subformulae])
-    elif type(formula).__name__ == 'bool' or type(formula).__name__ == 'Constant':
-        return formula
-    
-def is_clause(formula):
-    if type(formula).__name__ in ['And', 'BigAnd']: return False
-    if type(formula).__name__ in ['Symbol', 'Constant', 'bool', 'Neg']: return True
-    subs = formula.subformulae
-    out = []
-    for i in subs:
-        if type(i).__name__ in ['And', 'BigAnd']: return False
-        elif type(i).__name__ == 'BigOr': out.append(is_clause(i))
-    for o in out: 
-        if o != True: return False
-    return True
+def pure_literal_rule(formula: CNF) -> tuple[CNF, Interpretation] | None:
+    """Tries to apply the pure literal rule to the given formula.
 
-def is_cnf(formula):
-    #print(f'is it cnf ? {formula}')
-    if type(formula).__name__ != 'BigAnd': return False
-    subs = formula.subformulae
-    for i in subs:
-        if type(i).__name__ == 'BigOr' and not is_clause(i): return False
-        if type(i).__name__ == 'BigAnd' and not is_term(i): return False
-        if type(i).__name__ in ['Symbol', 'Constant', 'bool']: continue
-        if type(i).__name__ == 'Neg': return is_clause(i.subformula)
-    return True
+    A pure literal is one whose complement does not occur within the formula. If one of the literals in the input
+    formula is pure this function creates a new formula that is identical to the input, except that all clauses
+    containing the pure literal are removed. The generated interpretation assigns the symbol of the found pure literal
+    such that the literal is true, and all other symbols that only occurred in removed clauses to false.
 
-def is_term(formula):
-    if type(formula).__name__ in ['Or', 'BigOr']: return False
-    if type(formula).__name__ in ['Symbol', 'Constant', 'bool', 'Neg']: return True
-    subs = formula.subformulae
-    out = []
-    for i in subs:
-        if type(i).__name__ in ['Or', 'BigOr']: return False
-        elif type(i).__name__ == 'BigAnd': out.append(is_term(i))
-    for o in out: 
-        if o != True: return False
-    return True
-
-def is_dnf(formula):
-    if type(formula).__name__ != 'BigOr': return False
-    subs = formula.subformulae
-    for i in subs:
-        if type(i).__name__ == 'BigAnd' and not is_term(i): return False
-        if type(i).__name__ == 'BigOr' and not is_clause(i): return False
-        if type(i).__name__ in ['Symbol', 'Constant', 'bool']: continue
-        if type(i).__name__ == 'Neg': return is_term(i.subformula)
-    return True
-
-def _or(big):
-   # print(f'correcting {big}')
-    if type(big).__name__ != 'BigOr': return big
-    for d, i in enumerate(big.subformulae):
-        corr = BigOr([])
-        if type(i).__name__ == 'BigAnd':
-            cl = []
-            for subel in i.subformulae:
-                cl.append(BigOr([big.subformulae[:d] 
-                                + big.subformulae[1+d:] 
-                                + [subel]]))
-            corr = BigAnd(subformulae = cl)
-#            print(f'correction: {is_cnf(corr)} == {corr}')
-            return _or(corr)
-        elif type(i).__name__ == 'BigOr':
-          #  print(f'append to bigor? {i}')
-            for sub in i:
-                if not is_clause(sub):
-                    sub = _or(sub)
-                  #  print(f'correction** {sub}')
-                    big.subformulae[d] = sub
-                    return big
-        else:
-          #  print(f'appending {i} to {corr}')
-            corr.subformulae.append(i)
-      #  print(f'valid clause? {corr}, {is_clause(corr)}')
-        return corr
-
-def transform(formula):
-   # print(f'transforming {formula}')
-    formula = to_nnf(formula)
- #   print(f'nnf {formula}')
-    formula = big_maker(formula)
-  #  print(f'big {formula}')
-    if type(formula).__name__ == 'BigAnd': formula = big_maker(to_nnf(Neg(formula)))
-    
-    while not is_cnf(formula) and not is_dnf(formula):
-        formula = _or(formula)
-    return formula, is_cnf(formula), is_dnf(formula)
-
-def nnf_positive(formula: Formula) -> Formula:
-    """Returns an equivalent Formula in negation normal form.
-    
-    The input will be an arbitrary formula f. 
-    
-    The output needs to be a formula np(f) satisfying the following conditions:
-        1. f and np(f) are equivalent, i.e. their truth tables are identical,
-        2. np(f) does not contain any implications (Impl),
-        3. all negations (Neg) in np(f) must appear directly in front of symbols or constants.
-    
-    You may assume that input formulas do not contain BigAnd or BigOr.
+    Args:
+        formula: A formula in CNF (see Blatt 2).
+    Returns:
+        If the pure literal rule can be applied, the tuple of the resulting CNF formula and interpretation of removed
+        symbols. Or `None` if there are no pure literals.
+    Example:
+        In `((X \\/ Y) /\\ (X \\/ ~Y)) /\\ (Z \\/ ~Z)` the literal `X` is pure. The resulting formula should be
+        `((Z \\/ ~Z))` and the interpretation `{X: True, Y: False}`.
     """
 
-    return to_nnf(formula)
+    ...  # your code here
 
 
-def nnf_negative(formula: Formula) -> Formula:
-    """Unlike the previous function nnf_positive, this function returns a
-    Formula in negation normal form that is
-    
-    >>> equivalent to the negation of the input. <<<
-    
-    The input will be an arbitrary formula f. 
-    
-    The output needs to be a formula nn(f) satisfying the following conditions:
-        1. ~f and nn(f) are equivalent, i.e. their truth tables are identical,
-        2. nn(f) does not contain any implications (Impl),
-        3. all negations (Neg) in nn(f) must appear directly in front of symbols or constants.
-    
-    Again, you may assume that input formulas do not contain BigAnd or BigOr.
+def unit_propagation_rule(formula: CNF) -> tuple[CNF, Interpretation] | None:
+    """Tries to apply the unit propagation rule to the given formula.
+
+    A unit is a clause which contains only a single literal. If the input formula contains a unit this function creates
+    a new formula that is identical to it, except that all clauses containing the unit clause's literal are removed and
+    that literal's complement is removed from all other clauses. The generated interpretation assigns the symbol of
+    that literal such that the literal is true, and all other symbols that only occurred in removed clauses to false.
+
+    Args:
+        formula: A formula in CNF (see Blatt 2).
+    Returns:
+        If the unit propagation rule can be applied, the tuple of the resulting CNF formula and interpretation of
+        removed symbols. Or `None` if there are no units.
+    Example:
+        In `((X) /\\ (X \\/ ~Y)) /\\ (Z \\/ ~Z)` the clause `(X)` is a unit. The resulting formula should be
+        `((Z \\/ ~Z))` and the interpretation `{X: True, Y: False}`.
     """
 
-    return to_nnf(Neg(formula))
+    ...  # your code here
 
 
-def convert_to_dnf(formula: Formula) -> BigOr:
-    """Returns an equivalent formula in disjunctive normal form.
-    
-    The input will be an arbitrary formula f.
-    
-    The output needs to be a formula dnf(f) satisfying the following conditions:
-        1. f and dnf(f) are equivalent, i.e. their truth tables are identical,
-        2. dnf(f) is a BigOr formula,
-        3. dnf(f) contains only BigAnd formulae,
-            which only contain Symbols, Constants, or their negations.
-    
-    BigAnd and BigOr are Formula objects labelled with "/\\" and "\\/", containing a list of subformulae.
-    
-    For example, consider the BigAnd (from the documentation of `flatten` in propositional.py):
-    ```py
-    BigAnd(
-        subformulae=[
-            Or(Symbol("X"), Symbol("Y)),
-            Symbol("Z"),
-            Constant("1"),
-            Impl(Constant("0"), Constant("1")),
-            Or(Symbol("X"), Symbol("X")),
-            Symbol("Y"),
-            Symbol("Z"),
-        ]
-    )
-    ```
-    
-    You may assume that input formulas do not already contain BigAnd or BigOr.
+def simplify(formula: CNF) -> tuple[CNF, Interpretation]:
+    """Simplifies the given formula until it contains no unit clauses or pure literals.
+
+    Args:
+        formula: A formula in CNF (see Blatt 2).
+    Returns:
+        A tuple of the simplified formula and an interpretation of removed symbols such that all models of the input
+        are extensions of the returned interpretation.
+    Example:
+        Given `((X) /\\ (X \\/ ~Y) /\\ (~X \\/ Y \\/ Z \\/ ~Z))` the resulting formula is `()` and the interpretation
+        is `{X: True, Y: True, Z: False}`.
     """
 
-    return neg_checker(Neg(convert_to_cnf(formula)))
-    
-    
-
-
-def convert_to_cnf(formula: Formula) -> BigAnd:
-    """Returns an equivalent formula in conjunctive normal form.
-    
-    The input will be an arbitrary formula f.
-    
-    The output needs to be a formula cnf(f) satisfying the following conditions:
-        1. f and cnf(f) are equivalent, i.e. their truth tables are identical,
-        2. cnf(f) is a BigAnd formula,
-        3. cnf(f) contains only BigOr formulae,
-            which only contain Symbols, Constants, or their negations.
-            
-    Blatt 02 contains a hint for this task that can prevent writing duplicate code.
-    
-   You may assume that input formulas do not already contain BigAnd or BigOr.
-    """
-    
-    try:
-        if is_term(big_maker(neg_checker(formula))): return formula
-        if is_clause(big_maker(neg_checker(formula))): return neg_checker(Neg(formula))
-    except Exception as e:
-        print('Error checking clause/term')
-    formula, cnf, dnf = transform(formula)
-    
-    if cnf: return formula
-    elif dnf: return neg_checker(Neg(formula))
-    else: 
-        print('something went wrong')
-        return formula
+    ...  # your code here

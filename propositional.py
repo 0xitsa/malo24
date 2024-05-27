@@ -14,12 +14,14 @@ from __future__ import annotations
 import re
 import string
 from abc import ABC, abstractmethod
+from collections import deque
 from collections.abc import Mapping
 from dataclasses import InitVar, dataclass, field
 from functools import cached_property
 from itertools import chain, pairwise
-from typing import TYPE_CHECKING, ClassVar, Final, Literal, Self, TypeAlias, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, Never, Self, TypeAlias, cast, overload
 
+from typing_extensions import TypeVar
 from util import memoize
 
 if TYPE_CHECKING:
@@ -29,13 +31,16 @@ ConstantVal = Literal["0", "1"]
 UnaryOperator = Literal["~"]
 BinaryOperator = Literal["\\/", "/\\", "->"]
 Operator = ConstantVal | UnaryOperator | BinaryOperator
+F = TypeVar("F", bound="Formula", default="Formula", infer_variance=True)
+G = TypeVar("G", bound="Formula", default="Formula", infer_variance=True)
+H = TypeVar("H", bound="Formula", default=F, infer_variance=True)
 
 symbol_pattern = re.compile(r"[A-Z_][a-zA-Z_\-0-9]*")
 symbol_first_char = set(string.ascii_uppercase + "_")
 symbol_other_chars = set(string.ascii_letters + string.digits + "_-")
 
 
-class Formula(ABC):
+class Formula(Generic[F], ABC):
     """A propositional logic formula in tree representation.
 
     You cannot instantiate Formula objects directly, rather there is a subclass for each formula type that creates a
@@ -130,7 +135,7 @@ class Formula(ABC):
         return hash(str(self))
 
     @staticmethod
-    def _preprocess(other: Formula | str) -> Formula:
+    def _preprocess(other: G | str) -> G | Symbol | Constant:
         if other in ("0", "1"):
             return Constant(other)
         elif isinstance(other, str):
@@ -138,23 +143,23 @@ class Formula(ABC):
         else:
             return other
 
-    def __invert__(self) -> Formula:
+    def __invert__(self) -> Neg[Self]:
         """Returns the negated formula."""
         return Neg(self)
 
-    def __or__(self, other: Formula | str, /) -> Formula:
+    def __or__(self, other: G | str, /) -> Or[Self, G | Symbol | Constant]:
         """Returns the disjunction of both formulae."""
         return Or(self, self._preprocess(other))
 
-    def __ror__(self, other: Formula | str, /) -> Formula:
+    def __ror__(self, other: G | str, /) -> Or[G | Symbol | Constant, Self]:
         """Returns the disjunction of both formulae."""
         return Or(self._preprocess(other), self)
 
-    def __and__(self, other: Formula | str, /) -> Formula:
+    def __and__(self, other: G | str, /) -> And[Self, G | Symbol | Constant]:
         """Returns the conjunction of both formulae."""
         return And(self, self._preprocess(other))
 
-    def __rand__(self, other: Formula | str, /) -> Formula:
+    def __rand__(self, other: G | str, /) -> And[G | Symbol | Constant, Self]:
         """Returns the conjunction of both formulae."""
         return And(self._preprocess(other), self)
 
@@ -185,40 +190,41 @@ class Formula(ABC):
     def _tokenize(string: str) -> Iterator[Token]:
         """Splits the passed string into a list of the individual symbols, operators, and parentheses in it."""
         iterator = pairwise(string + " ")  # we need one character of lookahead for binary operators and symbol names
-        while True:
-            try:
-                match next(iterator):
-                    # skip spaces, effectively stripping them from the output
-                    case " ", _:
-                        continue
+        for val in iterator:
+            match val:
+                # skip spaces, effectively stripping them from the output
+                case " ", _:
+                    continue
 
-                    # single char tokens can be passed through
-                    case "0" | "1" | "~" | "(" | ")" as single_char_op, _:
-                        yield single_char_op
+                # single char tokens can be passed through
+                case "0" | "1" | "~" | "(" | ")" as single_char_op, _:
+                    yield single_char_op
 
-                    # two char tokens are combined
-                    case ("\\", "/") | ("/", "\\") | ("-", ">") as two_char_op:
-                        yield cast(Literal["\\/", "/\\", "->"], "".join(two_char_op))
-                        next(iterator)  # skip the second char of the operator
+                # two char tokens are combined
+                case ("\\", "/") | ("/", "\\") | ("-", ">") as two_char_op:
+                    yield cast(Literal["\\/", "/\\", "->"], "".join(two_char_op))
+                    next(iterator)  # skip the second char of the operator
 
-                    # for symbol names we ned to combine them until we find a non-symbol-name char
-                    case symbol_name_start, lookahead if symbol_name_start in symbol_first_char:  #
-                        symbol_name = [symbol_name_start]
-                        try:
-                            # take from lookahead since the char that ends the symbol name is the first char after it
-                            # i.e. it needs to be the next one yielded in the outer loop
-                            while lookahead in symbol_other_chars:
-                                symbol_name.append(lookahead)
-                                _, lookahead = next(iterator)
-                        except StopIteration:
-                            pass
-                        yield Symbol("".join(symbol_name))
+                # for symbol names we ned to combine them until we find a non-symbol-name char
+                case char, lookahead if char in symbol_first_char:
+                    symbol_name = char
+                    while lookahead in symbol_other_chars:
+                        symbol_name += lookahead
+                        _, lookahead = next(iterator)
 
-                    # if it's not one of the above combinations then it's not a valid token
-                    case first, second:
-                        raise ValueError(f"Invalid characters '{first}{second}'")
-            except StopIteration:
-                return
+                    # if the input string contains a symbol name followed by "->" we want to interpret the "-" as part
+                    # of the -> operator, not the symbol name. We can only see this once we've seen the ">" in the
+                    # lookahead, so we cannot rely on the usual pattern matching case to yield it in the next iteration
+                    if symbol_name[-1] == "-" and lookahead == ">":
+                        yield Symbol(symbol_name[:-1])
+                        yield "->"
+                        next(iterator)
+                    else:
+                        yield Symbol(symbol_name)
+
+                # if it's not one of the above combinations then it's not a valid token
+                case first, second:
+                    raise ValueError(f"Invalid characters '{first}{second}'")
 
     @staticmethod
     def _parse_prefix(tokens: list[Token]) -> tuple[Formula, list[Token]]:
@@ -321,9 +327,81 @@ class Formula(ABC):
             truth_table[interpretation] = self.evaluate(interpretation)
         return truth_table
 
+    def as_nnf(self) -> NNF:
+        """Returns the equivalent `NNF` formula."""
 
-@dataclass(frozen=True, slots=True, order=True)
-class Symbol(Formula):
+        match self:
+            case Constant() | Symbol():
+                return self
+            case Neg(subformula):
+                return subformula._nnf_negative()
+            case Or(f1, f2):
+                return Or(f1.as_nnf(), f2.as_nnf())
+            case And(f1, f2):
+                return And(f1.as_nnf(), f2.as_nnf())
+            case Impl(f1, f2):
+                return Or(f1._nnf_negative(), f2.as_nnf())
+            case _:
+                raise TypeError
+
+    def _nnf_negative(self) -> NNF:
+        """Returns the equivalent `NNF` formula."""
+
+        match self:
+            case Constant("0"):
+                return Constant("1")
+            case Constant("1"):
+                return Constant("0")
+            case Symbol():
+                return Neg(self)
+            case Neg(subformula):
+                return subformula.as_nnf()
+            case Or(f1, f2):
+                return And(f1._nnf_negative(), f2._nnf_negative())
+            case And(f1, f2):
+                return Or(f1._nnf_negative(), f2._nnf_negative())
+            case Impl(f1, f2):
+                return And(f1.as_nnf(), f2._nnf_negative())
+            case _:
+                raise TypeError
+
+    def _dnf_step(self) -> Formula:
+        match self:
+            case And(f1, Or(f2, f3)) | And(Or(f2, f3), f1):
+                return Or(And(f1, f2), And(f1, f3))
+            case Constant() | Symbol() | Neg():
+                raise ValueError
+            case BinaryFormula(f1, f2):
+                try:
+                    return type(self)(f1._dnf_step(), f2)
+                except ValueError:
+                    return type(self)(f1, f2._dnf_step())
+            case _:
+                raise TypeError
+
+    def as_dnf(self) -> DNF:
+        """Returns the equivalent `DNF` formula."""
+
+        self = self.as_nnf()
+        try:
+            while True:
+                self = self._dnf_step()
+        except ValueError:
+            pass
+        formula2 = cast("NestedOr[NestedAnd[LiteralFormula | Constant]]", self)
+
+        formula2 = BigOr.flatten(formula2)
+        clauses = [BigAnd.flatten(clause) for clause in formula2.subformulae]
+
+        return BigOr(
+            BigAnd(lit for lit in clause if not isinstance(lit, Constant))
+            for clause in clauses
+            if Constant("0") not in clause.subformulae
+        )
+
+
+@dataclass(frozen=True, order=True)
+class Symbol(Formula[Never]):
     """A single propositional symbol.
 
     Consists of a single string, the symbol's name. If an instance is created with an invalid name, `ValuError` is
@@ -363,8 +441,8 @@ class Symbol(Formula):
         return interpretation[self]
 
 
-@dataclass(frozen=True, slots=True)
-class Constant(Formula):
+@dataclass(frozen=True)
+class Constant(Formula[Never]):
     label: ConstantVal
 
     @memoize
@@ -383,9 +461,9 @@ class Constant(Formula):
         return self.label == "1"
 
 
-@dataclass(frozen=True, slots=True)
-class Neg(Formula):
-    subformula: Formula
+@dataclass(frozen=True)
+class Neg(Formula[F]):
+    subformula: F
 
     label: Final = "~"
 
@@ -405,10 +483,10 @@ class Neg(Formula):
         return not self.subformula.evaluate(interpretation)
 
 
-@dataclass(frozen=True, slots=True)
-class BinaryFormula(Formula, ABC):
-    first: Formula
-    second: Formula
+@dataclass(frozen=True)
+class BinaryFormula(Generic[F, H], Formula[F | H], ABC):
+    first: F
+    second: H
 
     label: ClassVar[BinaryOperator]
 
@@ -425,48 +503,84 @@ class BinaryFormula(Formula, ABC):
         return self.first.symbols | self.second.symbols
 
 
-@dataclass(frozen=True, slots=True)
-class Or(BinaryFormula):
+class Or(BinaryFormula[F, H]):
     label = "\\/"
 
     def evaluate(self, interpretation: dict[Symbol, bool]) -> bool:
         return self.first.evaluate(interpretation) or self.second.evaluate(interpretation)
 
 
-@dataclass(frozen=True, slots=True)
-class And(BinaryFormula):
+class And(BinaryFormula[F, H]):
     label = "/\\"
 
     def evaluate(self, interpretation: dict[Symbol, bool]) -> bool:
         return self.first.evaluate(interpretation) and self.second.evaluate(interpretation)
 
 
-@dataclass(frozen=True, slots=True)
-class Impl(BinaryFormula):
+class Impl(BinaryFormula[F, H]):
     label = "->"
 
     def evaluate(self, interpretation: dict[Symbol, bool]) -> bool:
         return self.first.evaluate(interpretation) <= self.second.evaluate(interpretation)
 
 
-@dataclass
-class BigFormula(Formula, ABC):
-    subformulae: list[Formula]
+Elem = TypeVar("Elem", bound=Formula)
+NestedOr: TypeAlias = "Or[NestedOr] | Elem"
+NestedAnd: TypeAlias = "And[NestedAnd] | Elem"
+
+
+@dataclass(frozen=True)
+class BigFormula(Formula[F], ABC):
+    subformulae: tuple[F, ...]
 
     label: ClassVar[BinaryOperator]
+    neutral_element: ClassVar[ConstantVal]
+
+    @overload
+    def __init__(self, *subformulae: F) -> None: ...
+    @overload
+    def __init__(self, subformulae: Iterable[F]) -> None: ...
+
+    def __init__(self, *subformulae: F | Iterable[F]) -> None:
+        """Constructs a single formula from the given subformulae.
+
+        There are two ways to create this object. The first is to call it with any number of individual `Formula`
+        objects as its arguments. E.g. `BigAnd(X, Y, Z)` or `BigOr(X)`. The second is to call it with a single
+        `Iterable` of `Formula`s that is not itself a `Formula`. E.g. `BigAnd([X, Y, Z])` or
+        `BigOr(Symbol(f"P_{i}") for i in range(10))`. In this case the resulting `BigFormula` contains all individual
+        elements from the argument.
+
+        If an argument is given that is both an `Iterable` and a `Formula` (i.e. a `BigFormula` object itself) it is
+        interpreted as an individual formula. That is, `BigAnd(BigOr(X, Y, Z))` results in these objects:
+        ```
+        BigAnd(
+            subformulae=(
+                BigOr(subformulae=(X, Y, Z)),
+            ),
+        )
+        ```
+        """
+        if len(subformulae) == 1 and not isinstance(subformulae[0], Formula):
+            subformulae = tuple(subformulae[0])
+        if any(not isinstance(f, Formula) for f in subformulae):
+            raise TypeError
+        object.__setattr__(self, "subformulae", subformulae)
 
     def __str__(self) -> str:
         match self.subformulae:
-            case []:
-                return "1"
-            case [formula]:
-                return str(formula)
-            case _:
+            case [_, _, *_]:
                 inner = f" {self.label} ".join(str(f) for f in self.subformulae)
                 return f"({inner})"
+            case [formula]:
+                return str(formula)
+            case []:
+                return self.neutral_element
 
-    def __iter__(self) -> Iterator[Formula]:
+    def __iter__(self) -> Iterator[F]:
         return iter(self.subformulae)
+
+    def __contains__(self, other: object, /) -> bool:
+        return other in self.subformulae
 
     @cached_property
     def operators(self) -> frozenset[Operator]:
@@ -477,7 +591,7 @@ class BigFormula(Formula, ABC):
         return frozenset(chain.from_iterable(f.symbols for f in self.subformulae))
 
     @classmethod
-    def flatten(cls, formula: Formula) -> Self:
+    def _flatten(cls, formula: Any) -> Any:
         """Flattens the topmost part of the formula that is all joined by the same operator.
 
         Will flatten through regular and big versions of the top level operator.
@@ -520,29 +634,39 @@ class BigFormula(Formula, ABC):
         )
         ```
         """
-        subformulae = [formula]
+        subformulae = deque([formula])
         collected = list[Formula]()
         while subformulae:
-            top = subformulae.pop()
+            top = subformulae.popleft()
             match top:
                 case BinaryFormula(f1, f2) if top.label == cls.label:
                     subformulae.extend([f1, f2])
-                case BigFormula(subformulae) if top.label == cls.label:
-                    subformulae.extend(subformulae)
+                case BigFormula() if top.label == cls.label:
+                    subformulae.extend(top)
                 case other:
                     collected.append(other)
-        return cls(collected)
+        return cls(*collected)
 
 
-class BigOr(BigFormula):
+class BigOr(BigFormula[F]):
     label = "\\/"
+    neutral_element = "0"
+
+    @classmethod
+    def flatten(cls, formula: NestedOr[Elem]) -> BigOr[Elem]:
+        return super()._flatten(formula)
 
     def evaluate(self, interpretation: dict[Symbol, bool]) -> bool:
         return any(subformula.evaluate(interpretation) for subformula in self.subformulae)
 
 
-class BigAnd(BigFormula):
+class BigAnd(BigFormula[F]):
     label = "/\\"
+    neutral_element = "1"
+
+    @classmethod
+    def flatten(cls, formula: NestedAnd[Elem]) -> BigAnd[Elem]:
+        return super()._flatten(formula)
 
     def evaluate(self, interpretation: dict[Symbol, bool]) -> bool:
         return all(subformula.evaluate(interpretation) for subformula in self.subformulae)
@@ -563,6 +687,11 @@ my_interpretation = {
 To then access the value of a symbol under an interpretation use the indexing operator `my_interpretation[Symbol("X")]`.
 You can also use this to change the interpretation of a symbol: `my_interpretation[Symbol("X")] = False`.
 """
+
+LiteralFormula = Symbol | Neg[Symbol]
+NNF: TypeAlias = "And[NNF] | Or[NNF] | BigAnd[NNF] | BigOr[NNF] | LiteralFormula | Constant"
+CNF = BigAnd[BigOr[LiteralFormula]]
+DNF = BigOr[BigAnd[LiteralFormula]]
 
 
 @dataclass(frozen=True)
