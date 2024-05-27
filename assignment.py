@@ -13,7 +13,7 @@ classes remain exactly the same. If you are not using a type checker, you can ig
 treat `CNF` exactly the same as `BigAnd` or `DNF` the same as `BigOr`.
 """
 
-from propositional import CNF, Interpretation
+from propositional import *
 
 
 def pure_literal_rule(formula: CNF) -> tuple[CNF, Interpretation] | None:
@@ -34,7 +34,48 @@ def pure_literal_rule(formula: CNF) -> tuple[CNF, Interpretation] | None:
         `((Z \\/ ~Z))` and the interpretation `{X: True, Y: False}`.
     """
 
-    ...  # your code here
+    interpretation: Interpretation = {}
+    removed_clauses = set()
+    
+    for clause in formula:
+        for literal in get_literals(clause):
+            match literal:
+                case Symbol(name) if Symbol(name) not in interpretation.keys():
+                    if any(
+                        Neg(Symbol(name)) in get_literals(other_clause) for other_clause in formula
+                        if other_clause not in removed_clauses
+                    ):
+                        break
+                    print(f"pure - Setting {literal} to True")
+                    interpretation[literal] = True
+                    removed_clauses.update(
+                        clause
+                        for clause in formula
+                        if literal in get_literals(clause) and clause not in removed_clauses
+                    )
+                case Neg(Symbol(name)) if Symbol(name) not in interpretation:
+                    if any(
+                        Symbol(name) in get_literals(other_clause) for other_clause in formula
+                        if other_clause not in removed_clauses
+                    ):
+                        break
+                    print(f"pure - Setting {literal} to False")
+                    interpretation[Symbol(name)] = False
+                    removed_clauses.update(
+                        clause
+                        for clause in formula
+                        if literal in get_literals(clause) and clause not in removed_clauses
+                    )
+    print(f"pure - {interpretation}")
+    if removed_clauses:
+        return (
+            BigAnd([clause for clause in formula if clause not in removed_clauses]),
+            interpretation,
+        )
+    else:
+        return None
+    
+
 
 
 def unit_propagation_rule(formula: CNF) -> tuple[CNF, Interpretation] | None:
@@ -55,8 +96,30 @@ def unit_propagation_rule(formula: CNF) -> tuple[CNF, Interpretation] | None:
         `((Z \\/ ~Z))` and the interpretation `{X: True, Y: False}`.
     """
 
-    ...  # your code here
+    interpretation: Interpretation = {}
+    removed_clauses = set()
+    
+    for clause in formula:
+        if sum(1 for _ in get_literals(clause)) == 1:
+            unit_literal = next(get_literals(clause))
+            match unit_literal:
+                case Symbol(name):
+                    pure_literal = unit_literal
+                    interpretation[pure_literal] = True
+                case Neg(Symbol(name)):
+                    pure_literal = Symbol(name)
+                    interpretation[pure_literal] = False
 
+            if pure_literal is not None:
+                subs = []
+                for subformula in formula:
+                    if sum(1 for _ in get_literals(subformula)) == 1 and pure_literal != next(get_literals(subformula)):
+                        subs.append(subformula)
+                    elif sum(1 for _ in get_literals(subformula)) > 1 and pure_literal not in get_literals(subformula):
+                        subs.append(subformula)
+                return BigAnd(subs), interpretation
+
+    return None
 
 def simplify(formula: CNF) -> tuple[CNF, Interpretation]:
     """Simplifies the given formula until it contains no unit clauses or pure literals.
@@ -71,4 +134,22 @@ def simplify(formula: CNF) -> tuple[CNF, Interpretation]:
         is `{X: True, Y: True, Z: False}`.
     """
 
-    ...  # your code here
+    interpretation: Interpretation = {}
+    print(formula)
+    while True:
+        result = unit_propagation_rule(formula)
+        if result is not None:
+            formula, new_interpretation = result
+            interpretation.update(new_interpretation)
+            print(formula)
+            continue
+        
+        result = pure_literal_rule(formula)
+        if result is not None:
+            formula, new_interpretation = result
+            interpretation.update(new_interpretation)
+            print(formula)
+            continue
+        break
+
+    return formula, interpretation
