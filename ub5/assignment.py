@@ -1,6 +1,6 @@
 """Week 5 assignment."""
 
-from first_order import AtomicFormula, FunctionSymbol, Interpretation, Structure, Term, Variable
+from first_order import *
 from typing_extensions import TypeVar
 from util import custom_test
 
