@@ -36,8 +36,14 @@ def evaluate_term(term: Term, interpretation: Interpretation[T]) -> T:
     assert term.symbols <= interpretation.structure.symbols
     assert term.variables <= interpretation.assignment.keys()
 
-    ...  # your code here
-
+    if isinstance(term, Variable):
+        return interpretation.assignment[term]
+    elif isinstance(term, FunctionTerm):
+        return interpretation.structure.functions[term.function](
+            *[evaluate_term(arg, interpretation) for arg in term.arguments]
+        )
+    else:
+        raise TypeError
 
 @custom_test(input=(f(x) == c, some_interpretation), output=False)
 def evaluate_atom(atom: AtomicFormula, interpretation: Interpretation[T]) -> bool:
@@ -57,4 +63,29 @@ def evaluate_atom(atom: AtomicFormula, interpretation: Interpretation[T]) -> boo
     assert atom.symbols <= interpretation.structure.symbols
     assert atom.free_variables <= interpretation.assignment.keys()
 
-    ...  # your code here
+    """Evaluates an atomic formula to its truth value.
+
+    Args:
+        atom: An atomic formula (Equality, RelationFormula, or TruthConstant).
+        interpretation: An interpretation over the same signature as the atomic formula that also interprets all
+            variables occurring in it.
+    Returns:
+        The truth value of the atomic formula under the given interpretation.
+    Example:
+        Given `a == b` and an interpretation where `a` and `b` are interpreted as 1 and 2,
+        this function should return `False`.
+    """
+
+    assert atom.symbols <= interpretation.structure.symbols
+    assert atom.free_variables <= interpretation.assignment.keys()
+
+    if isinstance(atom, TruthConstant):
+        return atom.value
+    elif isinstance(atom, Equality):
+        return evaluate_term(atom.first, interpretation) == evaluate_term(atom.second, interpretation)
+    elif isinstance(atom, RelationFormula):
+        return interpretation.structure.relations[atom.relation](
+            *[evaluate_term(arg, interpretation) for arg in atom.arguments]
+        )
+    else:
+        raise TypeError
